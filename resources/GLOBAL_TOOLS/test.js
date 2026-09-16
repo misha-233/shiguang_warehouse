@@ -739,14 +739,23 @@ async function runImportFlow() {
             c => String(c.position || '').includes('新区')
         ).length;
 
+        // 把首条原始记录里所有与校区/教室相关的字段名与值摊开，直接看接口到底给了什么
+        const _r0 = _list[0] || {};
+        const _relFields = Object.keys(_r0)
+            .filter(k => /^(xq|cd|jxdd|campus|room)/i.test(k))
+            .map(k => k + '=' + JSON.stringify(_r0[k]))
+            .join('  ');
+
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-6',
+            '诊断 SANXIAU-DIAG-7',
             [
-                '脚本版本 SANXIAU-DIAG-6',
-                '原始带xqmc ' + _rawWithCampus + '/' + _list.length,
-                '产出带新区 ' + _outWithCampus + '/' + courses.length,
-                '首条地名长度 ' + String((courses[0] || {}).position || '').length,
-                '原始xqmc长度 ' + String((_list[0] || {}).xqmc || '').length
+                '版本 SANXIAU-DIAG-7',
+                'kbList=' + _list.length + '  解析=' + courses.length,
+                '原始带xqmc=' + _rawWithCampus,
+                '产出带新区=' + _outWithCampus,
+                '首条地点=' + JSON.stringify((courses[0] || {}).position),
+                '--- 首条原始记录的相关字段 ---',
+                _relFields || '(一个都没有)'
             ].join('\n'),
             '知道了'
         );
@@ -788,7 +797,7 @@ async function runImportFlow() {
     await savePresetTimeSlots(timeSlots);
 
     // 7. 完成
-    let msg = `[SANXIAU-DIAG-6] 导入成功，共 ${courses.length} 条课程安排！`;
+    let msg = `[SANXIAU-DIAG-7] 导入成功，共 ${courses.length} 条课程安排！`;
     if (semesterStartDate) {
         msg += ` 开学日期：${semesterStartDate}`;
     } else {
