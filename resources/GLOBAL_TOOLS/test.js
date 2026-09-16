@@ -38,11 +38,15 @@ function parseWeeks(weekStr) {
     // 用定长标记表去重（周次 1-99），最后从小到大扫一遍即为升序。
     //
     // 【为什么不用 Set / filter / sort / 展开运算符】
-    // 实测（Android 机型上真机验证，代码版本与本文一致）：
+    // 真机上（Android，同一台设备、同一份代码、输入已确认为正确值）实测到
+    // 数组方法给出错误结果：
     //   raw.zcd = "1-16周"           → 本应 [1..16]，实际得到 [2..16]
     //   raw.zcd = "1-3周(单),4-16周" → 本应 [1,3,4..16]，实际得到 [3,4..16]
-    // 即 Array.prototype.filter 会静默吞掉第一个元素。
-    // 同一台设备上手写 for 循环结果正确，故此处只用下标与循环。
+    // 同一台设备上，手写 for 循环能得到正确结果，改用下标循环后上述两例均恢复正确。
+    //
+    // 具体是引擎哪一处缺陷，未能定性：同一环境下 .map / .sort 表现正常，
+    // 且 filter 也并非在每次调用上都出错，故此处不去猜机制，
+    // 只把数据处理路径统一换成下标循环，以结果为准则。
     const seen = [];
     for (let i = 0; i < 100; i++) seen[i] = false;
 
@@ -341,7 +345,8 @@ function parseJsonData(jsonData) {
         // 空值时补一个可读占位，不因为缺地点就丢弃这门课。
         const campus = String(raw.xqmc || '').trim();
         const room = String(raw.cdmc || raw.jxdd || '').trim();
-        // 不用 [a, b].filter(Boolean).join(' ')：同上，filter 会吞掉校区，实测会得到“明辨1-516”而丢掉“新区”。
+        // 不用 [a, b].filter(Boolean).join(' ')：真机上实测该写法会丢掉校区，
+        // 只得到“明辨1-516”（同一时刻 campus 变量里确实是“新区”）。理由详见 parseWeeks。
         const place = room || '未排地点';
         const position = campus ? (campus + ' ' + place) : place;
 
