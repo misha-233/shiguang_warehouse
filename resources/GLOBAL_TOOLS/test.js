@@ -763,23 +763,29 @@ async function runImportFlow() {
             if (!r) { _epLines.push(ep[0] + ' → 返回空/非 JSON'); continue; }
             const list = Array.isArray(r.kbList) ? r.kbList : [];
             if (_sig(r) === _jsonSig) _hit = ep[0].slice(0, 1);
-            _epLines.push(ep[0] + ' → kbList=' + list.length + ' 顶层=' + _sig(r).slice(0, 50));
-            _epLines.push('   首条 ' + _row(list[0]));
+            _epLines.push(ep[0] + ' kbList=' + list.length + ' ' + _row(list[0]));
+        }
+
+        // 正常情况（本次数据确实带校区）只弹精简版；只有在校区丢了的时候
+        // 才把首条的全部字段摊出来，避免弹窗长到看不清、白跑一趟。
+        const _hasCampus = String((_list[0] || {}).xqmc || '').trim().length > 0;
+        const _body2 = [
+            '版本 SANXIAU-DIAG-10',
+            '本次 kbList=' + _list.length + ' 解析=' + courses.length,
+            '本次首条 ' + _jsonRow,
+            '本次顶层=' + _jsonSig.slice(0, 60),
+            '★ 本次数据来自 = ' + _hit,
+            '---- 重新探测两个接口 ----',
+            _epLines.join('\n')
+        ];
+        if (!_hasCampus) {
+            _body2.push('---- 本次 kbList[0] 全字段 ----');
+            _body2.push(Object.keys(_list[0] || {}).join('|'));
         }
 
         await window.shiguangBridgePromise.showAlert(
             '诊断 SANXIAU-DIAG-10',
-            [
-                '版本 SANXIAU-DIAG-10',
-                '本次 kbList=' + _list.length + ' 解析=' + courses.length,
-                '本次首条 ' + _jsonRow,
-                '本次顶层=' + _jsonSig.slice(0, 50),
-                '★ 本次数据来自 = ' + _hit,
-                '---- 重新探测两个接口 ----',
-                _epLines.join('\n'),
-                '---- 本次 kbList[0] 全字段 ----',
-                Object.keys(_list[0] || {}).join('|')
-            ].join('\n'),
+            _body2.join('\n'),
             '知道了'
         );
     } catch (e) {
