@@ -271,8 +271,12 @@ function mergeAndDistinctCourses(courses) {
  * @param {object} jsonData 接口返回的 JSON
  * @returns {Array} 拾光课程数组
  */
+var _P13 = [];   // 仅 test 分支：采集 parseJsonData 内部中间量，排障后连同本段一并删除
+function _p13j(v) { try { return JSON.stringify(v); } catch (e) { return String(v); } }
+
 function parseJsonData(jsonData) {
     if (!jsonData || !Array.isArray(jsonData.kbList)) return [];
+    _P13 = [];
 
     const initialCourseList = [];
 
@@ -315,6 +319,21 @@ function parseJsonData(jsonData) {
         const sections = parseSections(sectionSource);
         if (!sections) continue;
         const { startSection, endSection } = sections;
+
+        // —— 仅 test 分支：把本行的中间量在算出来的这一刻记下来 ——
+        if (_P13.length < 4) {
+            const _nm = String(raw.kcmc || '');
+            if (initialCourseList.length < 3 || _nm.indexOf('离散数学') >= 0 || _nm.indexOf('创新创业') >= 0) {
+                _P13.push(
+                    '[' + initialCourseList.length + '] ' + _nm + ' 周' + String(raw.xqj) +
+                    '\n  typeof raw.xqmc=' + (typeof raw.xqmc) + '  raw.xqmc=' + _p13j(raw.xqmc) +
+                    '\n  campus=' + _p13j(campus) + '  room=' + _p13j(room) +
+                    '\n  position=' + _p13j(position) +
+                    '\n  raw.zcd=' + _p13j(raw.zcd) + '  raw.zcmc=' + _p13j(raw.zcmc) +
+                    '\n  weeks=' + _p13j(weeksArray)
+                );
+            }
+        }
 
         initialCourseList.push({
             name: courseName,
@@ -622,7 +641,7 @@ async function fetchTimeSlots() {
 async function promptUserToStart() {
     return await window.shiguangBridgePromise.showAlert(
         '重庆三峡科技大学教务课表导入',
-        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-10]',
+        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-13]',
         '好的，开始导入'
     );
 }
@@ -726,93 +745,80 @@ async function runImportFlow() {
     }
 
     /* ===== 临时诊断（仅 test 分支，绝不进 PR）=====
-     * DIAG-12：刻意全部用 for 循环 + typeof，避开 filter / map / String / parseInt，
-     * 与 DIAG-11（那三项全是 .filter()）交叉验证：
-     *   - 若手写 for 数出「原始xqmc非空 14/14」「产出day===3 有 4 条」，
-     *     而下面探针里 .filter 仍旧返回 0，就坐实了「数组方法被改写」；
-     *   - 若手写 for 也是 0，那就是数据真的不同，与数组方法无关。
+     * DIAG-13：不再猜，直接在**同一份 json.kbList** 上把 parseJsonData 的中间量
+     * 重算一遍，并把 parseJsonData(json) 整体再调用一次，与 courses 里实存的值三方对照。
+     * 判据：
+     *   重算/重跑 与 实存 不一致 → courses 在解析之后被谁改过；
+     *   三者一致但都不是期望值   → parseJsonData/parseWeeks 这台机器上就是这么算的；
+     *   raw.zcd 与本地抓包不同   → 手机取到的原始数据与电脑上抓的不是同一份。
      * 排障结束后必须从 test.js 中删除本段。 */
     try {
         const _list = Array.isArray(json.kbList) ? json.kbList : [];
-        const _L = _list.length;
-        const _C = courses.length;
-
         const _q = (fn) => {
             try { return '' + fn(); } catch (err) { return 'ERR:' + ((err && err.message) || err); }
         };
+        const _j = (v) => _q(() => JSON.stringify(v));
 
-        // 手写 for：原始行里 xqmc 非空 —— 不用 String / trim / filter
-        let _mCampus = 0;
-        for (let i = 0; i < _L; i++) {
-            const v = _list[i] ? _list[i].xqmc : undefined;
-            if (typeof v === 'string' && v.length > 0) _mCampus++;
+        // 挑三行：第 0 行、周三的离散数学、创新创业指导
+        const _idx = [];
+        for (let i = 0; i < _list.length; i++) {
+            const r = _list[i] || {};
+            const nm = String(r.kcmc || '');
+            if (i === 0) { _idx.push(i); continue; }
+            if (nm.indexOf('离散数学') >= 0 && String(r.xqj) === '3') { _idx.push(i); continue; }
+            if (nm.indexOf('创新创业') >= 0) { _idx.push(i); }
         }
 
-        // 手写 for：产出里 day===3 的条数与内容（盯死「离散数学 周三7-8」）
-        let _mDay3 = 0;
-        let _mWed = '';
-        for (let i = 0; i < _C; i++) {
-            const c = courses[i] || {};
-            if (c.day === 3) {
-                _mDay3++;
-                _mWed += _q(() => c.name) + ' ' + c.startSection + '-' + c.endSection +
-                         '[' + _q(() => c.weeks.join(',')) + '] ';
+        const _out = [];
+        _out.push('版本 SANXIAU-DIAG-13   kbList=' + _list.length + '  courses=' + courses.length);
+        _out.push('parseWeeks 类型: ' + (typeof parseWeeks));
+        _out.push('==== 首次解析内部采集 ====');
+        for (let k = 0; k < _P13.length; k++) _out.push(_P13[k]);
+
+        // 整体重跑一次同样的解析，作为对照
+        const _fresh = parseJsonData(json);
+        _out.push('重跑 parseJsonData(json) 得到 ' + _fresh.length + ' 条');
+        _out.push('  重跑首条 position=' + _j(_fresh[0] ? _fresh[0].position : null));
+        _out.push('  重跑首条 weeks=' + _j(_fresh[0] ? _fresh[0].weeks : null));
+        _out.push('  实存首条 position=' + _j(courses[0] ? courses[0].position : null));
+        _out.push('  实存首条 weeks=' + _j(courses[0] ? courses[0].weeks : null));
+        _out.push('==== 重跑解析内部采集 ====');
+        for (let k = 0; k < _P13.length; k++) _out.push(_P13[k]);
+
+        for (let k = 0; k < _idx.length; k++) {
+            const i = _idx[k];
+            const raw = _list[i] || {};
+            const campus = String(raw.xqmc || '').trim();
+            const room = String(raw.cdmc || raw.jxdd || '').trim();
+            const posNow = [campus, room || '未排地点'].filter(Boolean).join(' ') || '未排地点';
+            const wkNow = parseWeeks(raw.zcd || raw.zcmc || '');
+
+            let hit = null;
+            for (let c = 0; c < courses.length; c++) {
+                const cc = courses[c] || {};
+                if (String(cc.name) === String(raw.kcmc || '') &&
+                    cc.day === parseInt(raw.xqj, 10)) { hit = cc; break; }
             }
+
+            _out.push('---- [' + i + '] ' + (raw.kcmc || '?') + ' 周' + raw.xqj +
+                      ' ' + (raw.jcor || raw.jcs || '?') + ' ----');
+            if (k === 0) _out.push('raw 字段: ' + _q(() => Object.keys(raw).join(',')));
+            _out.push('raw.xqmc=' + _j(raw.xqmc) + '   raw.cdmc=' + _j(raw.cdmc));
+            _out.push('raw.zcd=' + _j(raw.zcd));
+            _out.push('重算 position=' + _j(posNow) + '   实存=' + _j(hit ? hit.position : '(未匹配)'));
+            _out.push('重算 weeks=' + _j(wkNow) + '   实存=' + _j(hit ? hit.weeks : null));
         }
-
-        // 手写 for：产出 position 里含「新区」（用 indexOf，不用 filter）
-        let _mOut = 0;
-        for (let i = 0; i < _C; i++) {
-            const p = courses[i] ? courses[i].position : undefined;
-            if (typeof p === 'string' && p.indexOf('新区') >= 0) _mOut++;
-        }
-
-        // 手写 for：14 条里有几条的周次含「第 2 周」——本校本学期第 2 周应为 8 条。
-        // 这一条直接判定问题在「适配器发错」还是「App 存错」。
-        let _mHasW2 = 0;
-        for (let i = 0; i < _C; i++) {
-            const ws = courses[i] ? courses[i].weeks : null;
-            if (ws && ws.length) {
-                for (let j = 0; j < ws.length; j++) {
-                    if (ws[j] === 2) { _mHasW2++; break; }
-                }
-            }
-        }
-
-        const _r0 = _list[0] || {};
-
-        const _body = [
-            '版本 SANXIAU-DIAG-12',
-            '手写for：原始xqmc非空 ' + _mCampus + '/' + _L +
-                '   产出day===3 ' + _mDay3 + '/' + _C +
-                '   产出含新区 ' + _mOut + '/' + _C,
-            '含第2周的条数 ' + _mHasW2 + '/' + _C + '   （第2周应有 8 条）',
-            'typeof r0.xqmc=' + (typeof _r0.xqmc) +
-                ' len=' + _q(() => _r0.xqmc.length) +
-                ' 是新区=' + (_r0.xqmc === '新区'),
-            'JSON.stringify(r0.xqmc)=' + _q(() => JSON.stringify(_r0.xqmc)),
-            '---- 手写for 列出的周三各条 ----',
-            _mWed || '(手写for 也是空 → courses 里真的没有 day===3)',
-            '---- 环境探针 ----',
-            'String(123)=' + _q(() => String(123)) +
-                '  parseInt("3",10)=' + _q(() => parseInt('3', 10)) +
-                '(' + _q(() => typeof parseInt('3', 10)) + ')',
-            '[1,2,3].filter(x=>x>1).len=' + _q(() => [1, 2, 3].filter(function (x) { return x > 1; }).length),
-            'kbList.filter(()=>1).len=' + _q(() => _list.filter(function () { return true; }).length),
-            'courses.filter(()=>1).len=' + _q(() => courses.filter(function () { return true; }).length),
-            'String===window.String ' + _q(() => String === window.String)
-        ];
 
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-12',
-            _body.join('\n'),
+            '诊断 SANXIAU-DIAG-13',
+            _out.join('\n'),
             '知道了'
         );
     } catch (e) {
         // 兜底：哪怕诊断自身出错，也要把错误显示出来，绝不静默
         try {
             await window.shiguangBridgePromise.showAlert(
-                '诊断出错 DIAG-12',
+                '诊断出错 DIAG-13',
                 String((e && e.message) || e),
                 '知道了'
             );
@@ -855,7 +861,7 @@ async function runImportFlow() {
     await savePresetTimeSlots(timeSlots);
 
     // 7. 完成
-    let msg = `[SANXIAU-DIAG-10] 导入成功，共 ${courses.length} 条课程安排！`;
+    let msg = `[SANXIAU-DIAG-13] 导入成功，共 ${courses.length} 条课程安排！`;
     if (semesterStartDate) {
         msg += ` 开学日期：${semesterStartDate}`;
     } else {
