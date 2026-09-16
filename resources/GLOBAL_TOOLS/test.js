@@ -767,6 +767,18 @@ async function runImportFlow() {
             if (typeof p === 'string' && p.indexOf('新区') >= 0) _mOut++;
         }
 
+        // 手写 for：14 条里有几条的周次含「第 2 周」——本校本学期第 2 周应为 8 条。
+        // 这一条直接判定问题在「适配器发错」还是「App 存错」。
+        let _mHasW2 = 0;
+        for (let i = 0; i < _C; i++) {
+            const ws = courses[i] ? courses[i].weeks : null;
+            if (ws && ws.length) {
+                for (let j = 0; j < ws.length; j++) {
+                    if (ws[j] === 2) { _mHasW2++; break; }
+                }
+            }
+        }
+
         const _r0 = _list[0] || {};
 
         const _body = [
@@ -774,6 +786,7 @@ async function runImportFlow() {
             '手写for：原始xqmc非空 ' + _mCampus + '/' + _L +
                 '   产出day===3 ' + _mDay3 + '/' + _C +
                 '   产出含新区 ' + _mOut + '/' + _C,
+            '含第2周的条数 ' + _mHasW2 + '/' + _C + '   （第2周应有 8 条）',
             'typeof r0.xqmc=' + (typeof _r0.xqmc) +
                 ' len=' + _q(() => _r0.xqmc.length) +
                 ' 是新区=' + (_r0.xqmc === '新区'),
