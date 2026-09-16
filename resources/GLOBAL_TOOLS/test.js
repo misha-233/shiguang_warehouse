@@ -622,7 +622,7 @@ async function fetchTimeSlots() {
 async function promptUserToStart() {
     return await window.shiguangBridgePromise.showAlert(
         '重庆三峡科技大学教务课表导入',
-        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。',
+        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-9]',
         '好的，开始导入'
     );
 }
@@ -729,51 +729,64 @@ async function runImportFlow() {
      * 用于确认 App 实际执行的脚本版本，以及接口原始字段与解析产出的对照。
      * 排障结束后必须从 test.js 中删除本段。 */
     try {
+        // 安全序列化：JSON.stringify(undefined) 返回的是 undefined 而非字符串，
+        // 直接 .slice() 会抛 TypeError —— 之前 DIAG-8 的弹窗就是这么没的。
+        const _sj = (v) => {
+            let s = null;
+            try { s = JSON.stringify(v); } catch (err) { s = null; }
+            return (s === undefined || s === null) ? String(v) : s;
+        };
+
         const _list = Array.isArray(json.kbList) ? json.kbList : [];
-        // 原始数据里真正带 xqmc 的条数
         const _rawWithCampus = _list.filter(
             r => String(r.xqmc || '').trim().length > 0
         ).length;
-        // 解析产出里真正带「新区」的条数
         const _outWithCampus = courses.filter(
             c => String(c.position || '').includes('新区')
         ).length;
 
-        // 把首条原始记录里所有与校区/教室相关的字段名与值摊开，直接看接口到底给了什么
         const _r0 = _list[0] || {};
         const _relFields = Object.keys(_r0)
             .filter(k => /^(xq|cd|jxdd|campus|room)/i.test(k))
-            .map(k => k + '=' + JSON.stringify(_r0[k]))
+            .map(k => k + '=' + _sj(_r0[k]))
             .join('  ');
 
-        // 周次日期表：若能取到，就能算出真实开学日期，不必让用户手动设
-        const _rq = json.rqazcList;
-        let _rqInfo;
-        if (Array.isArray(_rq)) {
-            _rqInfo = 'rqazcList 长度=' + _rq.length +
-                      '\n[0]=' + JSON.stringify(_rq[0]).slice(0, 160) +
-                      '\n[1]=' + JSON.stringify(_rq[1]).slice(0, 160);
-        } else {
-            _rqInfo = 'rqazcList=' + JSON.stringify(_rq);
-        }
+        // 顶层所有名字里带「周次/日期/时间」的字段，不管认不认识，全部摊开
+        const _zbKeys = Object.keys(json).filter(k => /rq|zc|sj|date|week|xq/i.test(k));
+        const _zbInfo = _zbKeys.map(k => {
+            const v = json[k];
+            if (Array.isArray(v)) {
+                return k + '[] len=' + v.length +
+                       (v.length ? '  首项=' + _sj(v[0]).slice(0, 130) : '  (空数组)');
+            }
+            return k + '=' + _sj(v).slice(0, 130);
+        }).join('\n');
 
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-8',
+            '诊断 SANXIAU-DIAG-9',
             [
-                '版本 SANXIAU-DIAG-8',
-                'kbList=' + _list.length + '  解析=' + courses.length,
-                '原始带xqmc=' + _rawWithCampus + '  产出带新区=' + _outWithCampus,
-                '首条地点=' + JSON.stringify((courses[0] || {}).position),
+                '版本 SANXIAU-DIAG-9',
+                'kbList=' + _list.length + ' 解析=' + courses.length,
+                '原始带xqmc=' + _rawWithCampus + ' 产出带新区=' + _outWithCampus,
+                '首条地点=' + _sj((courses[0] || {}).position),
                 '--- 校区/教室字段 ---',
                 _relFields || '(一个都没有)',
-                '--- 周次日期 ---',
-                'qsxqj=' + JSON.stringify(json.qsxqj),
-                _rqInfo
+                '--- 周次/日期类顶层字段 ---',
+                _zbInfo || '(一个都没有)'
             ].join('\n'),
             '知道了'
         );
     } catch (e) {
-        // 诊断本身失败不应影响导入
+        // 兜底：哪怕诊断自身出错，也要把错误显示出来，绝不静默
+        try {
+            await window.shiguangBridgePromise.showAlert(
+                '诊断出错 DIAG-9',
+                String((e && e.message) || e),
+                '知道了'
+            );
+        } catch (e2) {
+            // 彻底放弃，不影响导入
+        }
     }
 
     // 4. 保存课程
@@ -810,7 +823,7 @@ async function runImportFlow() {
     await savePresetTimeSlots(timeSlots);
 
     // 7. 完成
-    let msg = `[SANXIAU-DIAG-8] 导入成功，共 ${courses.length} 条课程安排！`;
+    let msg = `[SANXIAU-DIAG-9] 导入成功，共 ${courses.length} 条课程安排！`;
     if (semesterStartDate) {
         msg += ` 开学日期：${semesterStartDate}`;
     } else {
