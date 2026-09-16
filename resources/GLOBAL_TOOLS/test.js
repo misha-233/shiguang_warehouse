@@ -350,7 +350,11 @@ function parseJsonData(jsonData) {
         if (isNaN(day) || day < 1 || day > 7) continue;
 
         // --- 周次 ---
-        const weeksArray = parseWeeks(raw.zcd || raw.zcmc || '');
+        // 只认 zcd（如 "1-16周"、"1-3周(单),4-16周"）。
+        // 不要再回退到 zcmc —— 本校准方的 zcmc 是**教师职称**（"教授"/"讲师"/"实验师"），
+        // 实测 14 行全部如此，拿它当周次字符串在语义上就是错的。
+        // zcd 缺失时 parseWeeks 返回空数组，下面一行会把该行整条跳过，不会产出无周次的脏数据。
+        const weeksArray = parseWeeks(raw.zcd || '');
         if (weeksArray.length === 0) continue;
 
         // --- 节次 ---
