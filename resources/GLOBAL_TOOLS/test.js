@@ -729,19 +729,24 @@ async function runImportFlow() {
      * 用于确认 App 实际执行的脚本版本，以及接口原始字段与解析产出的对照。
      * 排障结束后必须从 test.js 中删除本段。 */
     try {
-        const _raw0 = (Array.isArray(json.kbList) ? json.kbList[0] : null) || {};
+        const _list = Array.isArray(json.kbList) ? json.kbList : [];
+        // 原始数据里真正带 xqmc 的条数
+        const _rawWithCampus = _list.filter(
+            r => String(r.xqmc || '').trim().length > 0
+        ).length;
+        // 解析产出里真正带「新区」的条数
+        const _outWithCampus = courses.filter(
+            c => String(c.position || '').includes('新区')
+        ).length;
+
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-5',
+            '诊断 SANXIAU-DIAG-6',
             [
-                '脚本版本：SANXIAU-DIAG-5',
-                '页面：' + location.href,
-                '根路径：' + getContextRoot(),
-                'kbList 条数：' + (Array.isArray(json.kbList) ? json.kbList.length : 'N/A'),
-                '解析出条数：' + courses.length,
-                '首条 xqmc=' + JSON.stringify(_raw0.xqmc),
-                '首条 cdmc=' + JSON.stringify(_raw0.cdmc),
-                '首条产出地点=' + JSON.stringify(courses[0] ? courses[0].position : null),
-                '前 3 条地点：' + courses.slice(0, 3).map(c => c.position).join(' | ')
+                '脚本版本 SANXIAU-DIAG-6',
+                '原始带xqmc ' + _rawWithCampus + '/' + _list.length,
+                '产出带新区 ' + _outWithCampus + '/' + courses.length,
+                '首条地名长度 ' + String((courses[0] || {}).position || '').length,
+                '原始xqmc长度 ' + String((_list[0] || {}).xqmc || '').length
             ].join('\n'),
             '知道了'
         );
@@ -783,7 +788,7 @@ async function runImportFlow() {
     await savePresetTimeSlots(timeSlots);
 
     // 7. 完成
-    let msg = `[SANXIAU-DIAG-5] 导入成功，共 ${courses.length} 条课程安排！`;
+    let msg = `[SANXIAU-DIAG-6] 导入成功，共 ${courses.length} 条课程安排！`;
     if (semesterStartDate) {
         msg += ` 开学日期：${semesterStartDate}`;
     } else {
