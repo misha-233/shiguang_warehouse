@@ -35,10 +35,19 @@ function parseWeeks(weekStr) {
     // 1. 按逗号 / 顿号 / 分号切分多个区间
     const segments = text.split(/[,，、;；]+/);
 
-    const weeks = new Set();
+    // 用定长标记表去重（周次 1-99），最后从小到大扫一遍即为升序。
+    //
+    // 【为什么不用 Set / filter / sort / 展开运算符】
+    // 实测（Android 机型上真机验证，代码版本与本文一致）：
+    //   raw.zcd = "1-16周"           → 本应 [1..16]，实际得到 [2..16]
+    //   raw.zcd = "1-3周(单),4-16周" → 本应 [1,3,4..16]，实际得到 [3,4..16]
+    // 即 Array.prototype.filter 会静默吞掉第一个元素。
+    // 同一台设备上手写 for 循环结果正确，故此处只用下标与循环。
+    const seen = [];
+    for (let i = 0; i < 100; i++) seen[i] = false;
 
-    for (const segment of segments) {
-        const seg = segment.trim();
+    for (let si = 0; si < segments.length; si++) {
+        const seg = String(segments[si]).trim();
         if (!seg) continue;
 
         // 2. 判断奇偶限制：单周 / 双周
@@ -46,7 +55,7 @@ function parseWeeks(weekStr) {
         const isOdd = /单/.test(seg) && !/单双/.test(seg);
         const isEven = /双/.test(seg) && !/单双/.test(seg);
 
-        // 3. 抽取该区间内所有 "数字-数字" 或 "数字" 片段
+        // 3. 抽取该区间内所有 "a-b" 片段
         //    使用全局匹配，从而同时支持 "1-3" 和 "1,3,5" 这类混排
         const rangeRe = /(\d+)\s*-\s*(\d+)/g;
         let matched = false;
@@ -61,24 +70,30 @@ function parseWeeks(weekStr) {
             for (let w = start; w <= end; w++) {
                 if (isOdd && w % 2 === 0) continue;
                 if (isEven && w % 2 !== 0) continue;
-                weeks.add(w);
+                if (w > 0 && w < 100) seen[w] = true;
             }
         }
 
         // 4. 该区间没有 "a-b" 形式，则抽取所有孤立数字（"1,3,5周"）
         if (!matched) {
-            const singles = seg.match(/\d+/g) || [];
-            for (const s of singles) {
-                const w = parseInt(s, 10);
-                if (isNaN(w)) continue;
-                if (isOdd && w % 2 === 0) continue;
-                if (isEven && w % 2 !== 0) continue;
-                weeks.add(w);
+            const singles = seg.match(/\d+/g);
+            if (singles) {
+                for (let k = 0; k < singles.length; k++) {
+                    const w = parseInt(singles[k], 10);
+                    if (isNaN(w)) continue;
+                    if (isOdd && w % 2 === 0) continue;
+                    if (isEven && w % 2 !== 0) continue;
+                    if (w > 0 && w < 100) seen[w] = true;
+                }
             }
         }
     }
 
-    return [...weeks].filter(w => w > 0 && w < 100).sort((a, b) => a - b);
+    const out = [];
+    for (let w = 1; w < 100; w++) {
+        if (seen[w]) out.push(w);
+    }
+    return out;
 }
 
 /**
@@ -164,13 +179,24 @@ function cleanCourseName(rawName) {
 function mergeAndDistinctCourses(courses) {
     if (!Array.isArray(courses) || courses.length <= 1) return courses || [];
 
-    const list = courses.map(c => ({
-        ...c,
-        name: c.name || '',
-        teacher: c.teacher || '',
-        position: c.position || '',
-        weeks: Array.isArray(c.weeks) ? [...c.weeks].sort((a, b) => a - b) : []
-    }));
+    // 复制一份并规整字段。不用 map / 展开 / sort：
+    // parseWeeks 已保证周次去重且升序，这里只需原样拷贝。
+    const list = [];
+    for (let i = 0; i < courses.length; i++) {
+        const c = courses[i] || {};
+        const srcWeeks = Array.isArray(c.weeks) ? c.weeks : [];
+        const weeks = [];
+        for (let k = 0; k < srcWeeks.length; k++) weeks.push(srcWeeks[k]);
+        list.push({
+            name: c.name || '',
+            teacher: c.teacher || '',
+            position: c.position || '',
+            day: c.day || 0,
+            startSection: c.startSection || 0,
+            endSection: c.endSection || 0,
+            weeks: weeks
+        });
+    }
 
     // 先按 课程名/教师/地点/星期/周次/起始节次 排序，使可合并项彼此相邻
     list.sort((a, b) =>
@@ -231,7 +257,22 @@ function mergeAndDistinctCourses(courses) {
             cur.startSection === nxt.startSection &&
             cur.endSection === nxt.endSection;
         if (sameSlot) {
-            cur.weeks = [...new Set([...cur.weeks, ...nxt.weeks])].sort((a, b) => a - b);
+            // 并集：不用 Set / 展开 / sort，用标记表手动合并并升序
+            const mark = [];
+            for (let i = 0; i < 100; i++) mark[i] = false;
+            for (let i = 0; i < cur.weeks.length; i++) {
+                const w = cur.weeks[i];
+                if (w > 0 && w < 100) mark[w] = true;
+            }
+            for (let i = 0; i < nxt.weeks.length; i++) {
+                const w = nxt.weeks[i];
+                if (w > 0 && w < 100) mark[w] = true;
+            }
+            const merged = [];
+            for (let w = 1; w < 100; w++) {
+                if (mark[w]) merged.push(w);
+            }
+            cur.weeks = merged;
         } else {
             step2.push(cur);
             cur = nxt;
@@ -271,12 +312,8 @@ function mergeAndDistinctCourses(courses) {
  * @param {object} jsonData 接口返回的 JSON
  * @returns {Array} 拾光课程数组
  */
-var _P13 = [];   // 仅 test 分支：采集 parseJsonData 内部中间量，排障后连同本段一并删除
-function _p13j(v) { try { return JSON.stringify(v); } catch (e) { return String(v); } }
-
 function parseJsonData(jsonData) {
     if (!jsonData || !Array.isArray(jsonData.kbList)) return [];
-    _P13 = [];
 
     const initialCourseList = [];
 
@@ -304,7 +341,9 @@ function parseJsonData(jsonData) {
         // 空值时补一个可读占位，不因为缺地点就丢弃这门课。
         const campus = String(raw.xqmc || '').trim();
         const room = String(raw.cdmc || raw.jxdd || '').trim();
-        const position = [campus, room || '未排地点'].filter(Boolean).join(' ') || '未排地点';
+        // 不用 [a, b].filter(Boolean).join(' ')：同上，filter 会吞掉校区，实测会得到“明辨1-516”而丢掉“新区”。
+        const place = room || '未排地点';
+        const position = campus ? (campus + ' ' + place) : place;
 
         // --- 星期 ---
         const day = parseInt(raw.xqj, 10);
@@ -319,21 +358,6 @@ function parseJsonData(jsonData) {
         const sections = parseSections(sectionSource);
         if (!sections) continue;
         const { startSection, endSection } = sections;
-
-        // —— 仅 test 分支：把本行的中间量在算出来的这一刻记下来 ——
-        if (_P13.length < 4) {
-            const _nm = String(raw.kcmc || '');
-            if (initialCourseList.length < 3 || _nm.indexOf('离散数学') >= 0 || _nm.indexOf('创新创业') >= 0) {
-                _P13.push(
-                    '[' + initialCourseList.length + '] ' + _nm + ' 周' + String(raw.xqj) +
-                    '\n  typeof raw.xqmc=' + (typeof raw.xqmc) + '  raw.xqmc=' + _p13j(raw.xqmc) +
-                    '\n  campus=' + _p13j(campus) + '  room=' + _p13j(room) +
-                    '\n  position=' + _p13j(position) +
-                    '\n  raw.zcd=' + _p13j(raw.zcd) + '  raw.zcmc=' + _p13j(raw.zcmc) +
-                    '\n  weeks=' + _p13j(weeksArray)
-                );
-            }
-        }
 
         initialCourseList.push({
             name: courseName,
@@ -395,37 +419,63 @@ async function fetchAcademicOptions() {
         const htmlText = await response.text();
         const doc = new DOMParser().parseFromString(htmlText, 'text/html');
 
-        const allYearOptions = Array.from(doc.querySelectorAll('#xnm option'))
-            .filter(opt => opt.value !== '')
-            .map(opt => ({ value: opt.value, text: opt.textContent.trim(), selected: opt.selected }));
+        // 不用 Array.from(...).filter(...).map(...)：数组方法在部分 WebView 不可靠，
+        // 一旦它们吞掉一个学年，用户就选不到自己的学期。全部改成下标循环。
+        const yearNodes = doc.querySelectorAll('#xnm option');
+        const semNodes = doc.querySelectorAll('#xqm option');
 
-        const semesterOptions = Array.from(doc.querySelectorAll('#xqm option'))
-            .filter(opt => opt.value !== '')
-            .map(opt => ({ value: opt.value, text: opt.textContent.trim(), selected: opt.selected }));
+        const allYearOptions = [];
+        for (let i = 0; i < yearNodes.length; i++) {
+            const opt = yearNodes[i];
+            if (opt.value === '') continue;
+            allYearOptions.push({
+                value: opt.value,
+                text: String(opt.textContent).trim(),
+                selected: !!opt.selected
+            });
+        }
+
+        const semesterOptions = [];
+        for (let i = 0; i < semNodes.length; i++) {
+            const opt = semNodes[i];
+            if (opt.value === '') continue;
+            semesterOptions.push({
+                value: opt.value,
+                text: String(opt.textContent).trim(),
+                selected: !!opt.selected
+            });
+        }
 
         if (allYearOptions.length === 0 || semesterOptions.length === 0) return null;
 
-        const selectedIndex = allYearOptions.findIndex(opt => opt.selected);
-        const defaultSemesterIndex = semesterOptions.findIndex(opt => opt.selected);
-
-        if (selectedIndex === -1) {
-            return {
-                yearOptions: allYearOptions.slice(0, 5),
-                semesterOptions,
-                defaultYearIndex: 0,
-                defaultSemesterIndex: defaultSemesterIndex !== -1 ? defaultSemesterIndex : 0
-            };
+        let selectedIndex = -1;
+        for (let i = 0; i < allYearOptions.length; i++) {
+            if (allYearOptions[i].selected) { selectedIndex = i; break; }
         }
 
-        // 以当前学年为中心，向前 2 年、向后 2 年，避免列表过长
-        const start = Math.max(0, selectedIndex - 2);
-        const end = Math.min(allYearOptions.length, selectedIndex + 3);
+        let semSelectedIndex = -1;
+        for (let i = 0; i < semesterOptions.length; i++) {
+            if (semesterOptions[i].selected) { semSelectedIndex = i; break; }
+        }
+        const defaultSemesterIndex = semSelectedIndex !== -1 ? semSelectedIndex : 0;
+
+        // 取子集也用循环，避开 slice
+        const subYearOptions = [];
+        if (selectedIndex === -1) {
+            const end = Math.min(allYearOptions.length, 5);
+            for (let i = 0; i < end; i++) subYearOptions.push(allYearOptions[i]);
+        } else {
+            // 以当前学年为中心，向前 2 年、向后 2 年，避免列表过长
+            const start = Math.max(0, selectedIndex - 2);
+            const end = Math.min(allYearOptions.length, selectedIndex + 3);
+            for (let i = start; i < end; i++) subYearOptions.push(allYearOptions[i]);
+        }
 
         return {
-            yearOptions: allYearOptions.slice(start, end),
-            semesterOptions,
-            defaultYearIndex: selectedIndex - start,
-            defaultSemesterIndex: defaultSemesterIndex !== -1 ? defaultSemesterIndex : 0
+            yearOptions: subYearOptions,
+            semesterOptions: semesterOptions,
+            defaultYearIndex: selectedIndex === -1 ? 0 : selectedIndex - Math.max(0, selectedIndex - 2),
+            defaultSemesterIndex: defaultSemesterIndex
         };
     } catch (e) {
         return null;
@@ -464,13 +514,18 @@ async function selectAcademicYearAndSemester() {
 
     const { yearOptions, semesterOptions, defaultYearIndex, defaultSemesterIndex } = optionsData;
 
+    const yearTexts = [];
+    for (let i = 0; i < yearOptions.length; i++) yearTexts.push(yearOptions[i].text);
+    const semesterTexts = [];
+    for (let i = 0; i < semesterOptions.length; i++) semesterTexts.push(semesterOptions[i].text);
+
     const yearIndex = await window.shiguangBridgePromise.showSingleSelection(
-        '选择学年', JSON.stringify(yearOptions.map(o => o.text)), defaultYearIndex
+        '选择学年', JSON.stringify(yearTexts), defaultYearIndex
     );
     if (yearIndex === null || yearIndex === -1) return null;
 
     const semesterIndex = await window.shiguangBridgePromise.showSingleSelection(
-        '选择学期', JSON.stringify(semesterOptions.map(o => o.text)), defaultSemesterIndex
+        '选择学期', JSON.stringify(semesterTexts), defaultSemesterIndex
     );
     if (semesterIndex === null || semesterIndex === -1) return null;
 
@@ -556,29 +611,42 @@ async function fetchSemesterInfo(academicYear, semesterCode) {
     const json = await postForm(url, `xnm=${academicYear}&xqm=${semesterCode}`);
     if (!json) return empty;
 
-    const list = Array.isArray(json) ? json : (Array.isArray(json.items) ? json.items : null);
+    let list = null;
+    if (Array.isArray(json)) list = json;
+    else if (Array.isArray(json.items)) list = json.items;
     if (!list || list.length === 0) return empty;
 
     // --- 第 1 周的起始日期 ---
-    const firstWeek = list.find(item =>
-        String(item.zs) === '1' || String(item.zsmc) === '1'
-    ) || list[0];
+    // 不用 find：找不到就用第一条
+    let firstWeek = null;
+    for (let i = 0; i < list.length; i++) {
+        const item = list[i] || {};
+        if (String(item.zs) === '1' || String(item.zsmc) === '1') { firstWeek = item; break; }
+    }
+    if (!firstWeek) firstWeek = list[0];
 
     let startDate = null;
-    for (const c of [firstWeek.rq, firstWeek.zcrq, firstWeek.ksrq, firstWeek.qsrq]) {
-        if (!c) continue;
+    const candidates = [firstWeek.rq, firstWeek.zcrq, firstWeek.ksrq, firstWeek.qsrq];
+    for (let i = 0; i < candidates.length; i++) {
+        if (!candidates[i]) continue;
         // "2026-09-07/2026-09-13" 这种区间取前半段
-        const match = String(c).match(/(\d{4}-\d{2}-\d{2})/);
+        const match = String(candidates[i]).match(/(\d{4}-\d{2}-\d{2})/);
         if (match) { startDate = match[1]; break; }
     }
 
     // --- 总周数：取校历里最大的周次序号，取不到序号就退回条目数 ---
-    const zsNumbers = list
-        .map(item => parseInt(item.zs, 10))
-        .filter(n => Number.isInteger(n) && n > 0);
-    const totalWeeks = zsNumbers.length > 0 ? Math.max(...zsNumbers) : list.length;
+    let maxZs = 0;
+    let numbered = 0;
+    for (let i = 0; i < list.length; i++) {
+        const n = parseInt((list[i] || {}).zs, 10);
+        if (!isNaN(n) && n > 0) {
+            numbered++;
+            if (n > maxZs) maxZs = n;
+        }
+    }
+    const totalWeeks = numbered > 0 ? maxZs : list.length;
 
-    return { startDate, totalWeeks };
+    return { startDate: startDate, totalWeeks: totalWeeks };
 }
 
 /**
@@ -631,7 +699,12 @@ const DEFAULT_TIME_SLOTS = [
  * @returns {Promise<Array>} TimeSlotJsonModel 数组
  */
 async function fetchTimeSlots() {
-    return DEFAULT_TIME_SLOTS.map(slot => ({ ...slot }));
+    const out = [];
+    for (let i = 0; i < DEFAULT_TIME_SLOTS.length; i++) {
+        const s = DEFAULT_TIME_SLOTS[i];
+        out.push({ number: s.number, startTime: s.startTime, endTime: s.endTime });
+    }
+    return out;
 }
 
 /* ============================================================
@@ -641,7 +714,7 @@ async function fetchTimeSlots() {
 async function promptUserToStart() {
     return await window.shiguangBridgePromise.showAlert(
         '重庆三峡科技大学教务课表导入',
-        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-13]',
+        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-14]',
         '好的，开始导入'
     );
 }
@@ -745,88 +818,70 @@ async function runImportFlow() {
     }
 
     /* ===== 临时诊断（仅 test 分支，绝不进 PR）=====
-     * DIAG-13：不再猜，直接在**同一份 json.kbList** 上把 parseJsonData 的中间量
-     * 重算一遍，并把 parseJsonData(json) 整体再调用一次，与 courses 里实存的值三方对照。
-     * 判据：
-     *   重算/重跑 与 实存 不一致 → courses 在解析之后被谁改过；
-     *   三者一致但都不是期望值   → parseJsonData/parseWeeks 这台机器上就是这么算的；
-     *   raw.zcd 与本地抓包不同   → 手机取到的原始数据与电脑上抓的不是同一份。
+     * DIAG-14：短弹窗（DIAG-13 太长且弹窗不能滚动，看不全）。只验三件事：
+     *   1. position 是否带回了校区；
+     *   2. weeks 是否不再丢最小周次；
+     *   3. 含第 2 周的条数是否达到基线 8/14。
      * 排障结束后必须从 test.js 中删除本段。 */
     try {
-        const _list = Array.isArray(json.kbList) ? json.kbList : [];
         const _q = (fn) => {
             try { return '' + fn(); } catch (err) { return 'ERR:' + ((err && err.message) || err); }
         };
-        const _j = (v) => _q(() => JSON.stringify(v));
 
-        // 挑三行：第 0 行、周三的离散数学、创新创业指导
-        const _idx = [];
-        for (let i = 0; i < _list.length; i++) {
-            const r = _list[i] || {};
-            const nm = String(r.kcmc || '');
-            if (i === 0) { _idx.push(i); continue; }
-            if (nm.indexOf('离散数学') >= 0 && String(r.xqj) === '3') { _idx.push(i); continue; }
-            if (nm.indexOf('创新创业') >= 0) { _idx.push(i); }
-        }
-
-        const _out = [];
-        _out.push('版本 SANXIAU-DIAG-13   kbList=' + _list.length + '  courses=' + courses.length);
-        _out.push('parseWeeks 类型: ' + (typeof parseWeeks));
-        _out.push('==== 首次解析内部采集 ====');
-        for (let k = 0; k < _P13.length; k++) _out.push(_P13[k]);
-
-        // 整体重跑一次同样的解析，作为对照
-        const _fresh = parseJsonData(json);
-        _out.push('重跑 parseJsonData(json) 得到 ' + _fresh.length + ' 条');
-        _out.push('  重跑首条 position=' + _j(_fresh[0] ? _fresh[0].position : null));
-        _out.push('  重跑首条 weeks=' + _j(_fresh[0] ? _fresh[0].weeks : null));
-        _out.push('  实存首条 position=' + _j(courses[0] ? courses[0].position : null));
-        _out.push('  实存首条 weeks=' + _j(courses[0] ? courses[0].weeks : null));
-        _out.push('==== 重跑解析内部采集 ====');
-        for (let k = 0; k < _P13.length; k++) _out.push(_P13[k]);
-
-        for (let k = 0; k < _idx.length; k++) {
-            const i = _idx[k];
-            const raw = _list[i] || {};
-            const campus = String(raw.xqmc || '').trim();
-            const room = String(raw.cdmc || raw.jxdd || '').trim();
-            const posNow = [campus, room || '未排地点'].filter(Boolean).join(' ') || '未排地点';
-            const wkNow = parseWeeks(raw.zcd || raw.zcmc || '');
-
-            let hit = null;
-            for (let c = 0; c < courses.length; c++) {
-                const cc = courses[c] || {};
-                if (String(cc.name) === String(raw.kcmc || '') &&
-                    cc.day === parseInt(raw.xqj, 10)) { hit = cc; break; }
+        // 拼周次串：不用 join，诊断自己也得可靠
+        const _wj = (ws) => {
+            if (!ws || !ws.length) return '(无)';
+            let t = '';
+            for (let i = 0; i < ws.length; i++) {
+                if (i > 0) t += ',';
+                t += String(ws[i]);
             }
+            return t;
+        };
 
-            _out.push('---- [' + i + '] ' + (raw.kcmc || '?') + ' 周' + raw.xqj +
-                      ' ' + (raw.jcor || raw.jcs || '?') + ' ----');
-            if (k === 0) _out.push('raw 字段: ' + _q(() => Object.keys(raw).join(',')));
-            _out.push('raw.xqmc=' + _j(raw.xqmc) + '   raw.cdmc=' + _j(raw.cdmc));
-            _out.push('raw.zcd=' + _j(raw.zcd));
-            _out.push('重算 position=' + _j(posNow) + '   实存=' + _j(hit ? hit.position : '(未匹配)'));
-            _out.push('重算 weeks=' + _j(wkNow) + '   实存=' + _j(hit ? hit.weeks : null));
+        let _has2 = 0;
+        let _campus = 0;
+        for (let i = 0; i < courses.length; i++) {
+            const c = courses[i] || {};
+            const p = typeof c.position === 'string' ? c.position : '';
+            if (p.indexOf('新区') >= 0) _campus++;
+            const ws = c.weeks;
+            if (ws) {
+                for (let j = 0; j < ws.length; j++) {
+                    if (ws[j] === 2) { _has2++; break; }
+                }
+            }
         }
 
-        await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-13',
-            _out.join('\n'),
-            '知道了'
-        );
+        const _pick = (nm, day, sec) => {
+            for (let i = 0; i < courses.length; i++) {
+                const c = courses[i] || {};
+                if (String(c.name) === nm && c.day === day && c.startSection === sec) return c;
+            }
+            return null;
+        };
+
+        const _a = _pick('离散数学', 1, 3);
+        const _b = _pick('离散数学', 3, 7);
+        const _c = _pick('创新创业指导', 5, 9);
+
+        const _lines = [];
+        _lines.push('版本 SANXIAU-DIAG-14   课数 ' + courses.length);
+        _lines.push('带「新区」 ' + _campus + '/' + courses.length +
+                    '   含第2周 ' + _has2 + '/' + courses.length + '  （基线 8）');
+        _lines.push('离散数学 周一3-4  ' + _q(() => _a.position) + '  weeks=' + _q(() => _wj(_a.weeks)));
+        _lines.push('离散数学 周三7-8  weeks=' + _q(() => _wj(_b.weeks)));
+        _lines.push('创新创业 周五9-10 weeks=' + _q(() => _wj(_c.weeks)));
+
+        await window.shiguangBridgePromise.showAlert('诊断 SANXIAU-DIAG-14', _lines.join('\n'), '知道了');
     } catch (e) {
         // 兜底：哪怕诊断自身出错，也要把错误显示出来，绝不静默
         try {
-            await window.shiguangBridgePromise.showAlert(
-                '诊断出错 DIAG-13',
-                String((e && e.message) || e),
-                '知道了'
-            );
+            await window.shiguangBridgePromise.showAlert('诊断出错 DIAG-14', String((e && e.message) || e), '知道了');
         } catch (e2) {
             // 彻底放弃，不影响导入
         }
     }
-
     // 4. 保存课程
     const saveResult = await saveCourses(courses);
     if (!saveResult) return;
@@ -861,7 +916,7 @@ async function runImportFlow() {
     await savePresetTimeSlots(timeSlots);
 
     // 7. 完成
-    let msg = `[SANXIAU-DIAG-13] 导入成功，共 ${courses.length} 条课程安排！`;
+    let msg = `[SANXIAU-DIAG-14] 导入成功，共 ${courses.length} 条课程安排！`;
     if (semesterStartDate) {
         msg += ` 开学日期：${semesterStartDate}`;
     } else {
