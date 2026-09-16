@@ -726,58 +726,72 @@ async function runImportFlow() {
     }
 
     /* ===== 临时诊断（仅 test 分支，绝不进 PR）=====
-     * 用于确认 App 实际执行的脚本版本，以及接口原始字段与解析产出的对照。
+     * DIAG-12：刻意全部用 for 循环 + typeof，避开 filter / map / String / parseInt，
+     * 与 DIAG-11（那三项全是 .filter()）交叉验证：
+     *   - 若手写 for 数出「原始xqmc非空 14/14」「产出day===3 有 4 条」，
+     *     而下面探针里 .filter 仍旧返回 0，就坐实了「数组方法被改写」；
+     *   - 若手写 for 也是 0，那就是数据真的不同，与数组方法无关。
      * 排障结束后必须从 test.js 中删除本段。 */
     try {
-        // 安全序列化：JSON.stringify(undefined) 返回的是 undefined 而非字符串，
-        // 直接 .slice() 会抛 TypeError —— 之前 DIAG-8 的弹窗就是这么没的。
-        const _sj = (v) => {
-            let s = null;
-            try { s = JSON.stringify(v); } catch (err) { s = null; }
-            return (s === undefined || s === null) ? String(v) : s;
+        const _list = Array.isArray(json.kbList) ? json.kbList : [];
+        const _L = _list.length;
+        const _C = courses.length;
+
+        const _q = (fn) => {
+            try { return '' + fn(); } catch (err) { return 'ERR:' + ((err && err.message) || err); }
         };
 
-        const _list = Array.isArray(json.kbList) ? json.kbList : [];
+        // 手写 for：原始行里 xqmc 非空 —— 不用 String / trim / filter
+        let _mCampus = 0;
+        for (let i = 0; i < _L; i++) {
+            const v = _list[i] ? _list[i].xqmc : undefined;
+            if (typeof v === 'string' && v.length > 0) _mCampus++;
+        }
+
+        // 手写 for：产出里 day===3 的条数与内容（盯死「离散数学 周三7-8」）
+        let _mDay3 = 0;
+        let _mWed = '';
+        for (let i = 0; i < _C; i++) {
+            const c = courses[i] || {};
+            if (c.day === 3) {
+                _mDay3++;
+                _mWed += _q(() => c.name) + ' ' + c.startSection + '-' + c.endSection +
+                         '[' + _q(() => c.weeks.join(',')) + '] ';
+            }
+        }
+
+        // 手写 for：产出 position 里含「新区」（用 indexOf，不用 filter）
+        let _mOut = 0;
+        for (let i = 0; i < _C; i++) {
+            const p = courses[i] ? courses[i].position : undefined;
+            if (typeof p === 'string' && p.indexOf('新区') >= 0) _mOut++;
+        }
+
         const _r0 = _list[0] || {};
 
-        // 用「本脚本 parseJsonData 里那段一模一样的表达式」从原始行重算首条地点。
-        // 它和 解析[0].position 只要有一个带「新区」，就说明解析环节没问题。
-        const _reposition = [
-            String(_r0.xqmc || '').trim(),
-            String(_r0.cdmc || _r0.jxdd || '').trim() || '未排地点'
-        ].filter(Boolean).join(' ') || '未排地点';
-
-        const _c0 = courses[0] || {};
-        const _rawCampus = _list.filter(r => String(r.xqmc || '').trim().length > 0).length;
-        const _outCampus = courses.filter(c => String(c.position || '').includes('新区')).length;
-
-        // 周三每一条的节次与周次 —— 直接盯住「离散数学 周三7-8」会不会被丢掉或合并
-        const _wed = courses
-            .filter(c => c.day === 3)
-            .sort((a, b) => a.startSection - b.startSection)
-            .map(c => c.name.slice(0, 6) + ' ' + c.startSection + '-' + c.endSection +
-                      ' [' + c.weeks.join(',') + ']');
-
-        // 全部课程的 星期/节次 —— 用来核对有没有两条被合并成一条
-        const _all = courses.slice()
-            .sort((a, b) => a.day - b.day || a.startSection - b.startSection)
-            .map(c => c.day + '/' + c.startSection + '-' + c.endSection);
-
         const _body = [
-            '版本 SANXIAU-DIAG-11',
-            '原始带xqmc ' + _rawCampus + '/' + _list.length +
-                '    产出带新区 ' + _outCampus + '/' + courses.length,
-            '原始[0] xqmc=' + _sj(_r0.xqmc) + ' cdmc=' + _sj(_r0.cdmc),
-            '重算[0] position=' + _sj(_reposition),
-            '解析[0] ' + _sj(_c0.name) + ' position=' + _sj(_c0.position),
-            '---- 周三各条：课程 节次 [周次] ----',
-            _wed.join('\n') || '(周三一条都没有)',
-            '---- 全部 ' + courses.length + ' 条的 星期/节次 ----',
-            _all.join(' ')
+            '版本 SANXIAU-DIAG-12',
+            '手写for：原始xqmc非空 ' + _mCampus + '/' + _L +
+                '   产出day===3 ' + _mDay3 + '/' + _C +
+                '   产出含新区 ' + _mOut + '/' + _C,
+            'typeof r0.xqmc=' + (typeof _r0.xqmc) +
+                ' len=' + _q(() => _r0.xqmc.length) +
+                ' 是新区=' + (_r0.xqmc === '新区'),
+            'JSON.stringify(r0.xqmc)=' + _q(() => JSON.stringify(_r0.xqmc)),
+            '---- 手写for 列出的周三各条 ----',
+            _mWed || '(手写for 也是空 → courses 里真的没有 day===3)',
+            '---- 环境探针 ----',
+            'String(123)=' + _q(() => String(123)) +
+                '  parseInt("3",10)=' + _q(() => parseInt('3', 10)) +
+                '(' + _q(() => typeof parseInt('3', 10)) + ')',
+            '[1,2,3].filter(x=>x>1).len=' + _q(() => [1, 2, 3].filter(function (x) { return x > 1; }).length),
+            'kbList.filter(()=>1).len=' + _q(() => _list.filter(function () { return true; }).length),
+            'courses.filter(()=>1).len=' + _q(() => courses.filter(function () { return true; }).length),
+            'String===window.String ' + _q(() => String === window.String)
         ];
 
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-11',
+            '诊断 SANXIAU-DIAG-12',
             _body.join('\n'),
             '知道了'
         );
@@ -785,7 +799,7 @@ async function runImportFlow() {
         // 兜底：哪怕诊断自身出错，也要把错误显示出来，绝不静默
         try {
             await window.shiguangBridgePromise.showAlert(
-                '诊断出错 DIAG-10',
+                '诊断出错 DIAG-12',
                 String((e && e.message) || e),
                 '知道了'
             );
