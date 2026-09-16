@@ -737,55 +737,48 @@ async function runImportFlow() {
             return (s === undefined || s === null) ? String(v) : s;
         };
 
-        // 顶层字段签名：用来判断「本次 json」到底出自哪个接口
-        const _sig = (o) => (o && typeof o === 'object') ? Object.keys(o).join(',') : '';
-        // 一行摘要：只列我们真正关心的四个字段，取值原样打印（带引号，空串也看得见）
-        const _row = (r) => r ? (
-            'xqmc=' + _sj(r.xqmc) + ' cdmc=' + _sj(r.cdmc) +
-            ' zcd=' + _sj(r.zcd) + ' jc=' + _sj(r.jcor || r.jcs || r.jc)
-        ) : '(无行)';
-
         const _list = Array.isArray(json.kbList) ? json.kbList : [];
-        const _jsonSig = _sig(json);
-        const _jsonRow = _row(_list[0]);
+        const _r0 = _list[0] || {};
 
-        // 两个候选接口各再打一次，比对顶层签名，确认「本次 json」出自哪一个
-        const _root = getContextRoot();
-        const _body = `xnm=${academicYear}&xqm=${semesterCode}&kzlx=ck&xsdm=&kclbdm=`;
-        const _epLines = [];
-        let _hit = '都不是';
-        for (const ep of [
-            ['A cxXsgrkb', '/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151'],
-            ['B cxXsKb  ', '/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151']
-        ]) {
-            let r = null;
-            try { r = await postForm(_root + ep[1], _body); } catch (err) { r = null; }
-            if (!r) { _epLines.push(ep[0] + ' → 返回空/非 JSON'); continue; }
-            const list = Array.isArray(r.kbList) ? r.kbList : [];
-            if (_sig(r) === _jsonSig) _hit = ep[0].slice(0, 1);
-            _epLines.push(ep[0] + ' kbList=' + list.length + ' ' + _row(list[0]));
-        }
+        // 用「本脚本 parseJsonData 里那段一模一样的表达式」从原始行重算首条地点。
+        // 它和 解析[0].position 只要有一个带「新区」，就说明解析环节没问题。
+        const _reposition = [
+            String(_r0.xqmc || '').trim(),
+            String(_r0.cdmc || _r0.jxdd || '').trim() || '未排地点'
+        ].filter(Boolean).join(' ') || '未排地点';
 
-        // 正常情况（本次数据确实带校区）只弹精简版；只有在校区丢了的时候
-        // 才把首条的全部字段摊出来，避免弹窗长到看不清、白跑一趟。
-        const _hasCampus = String((_list[0] || {}).xqmc || '').trim().length > 0;
-        const _body2 = [
-            '版本 SANXIAU-DIAG-10',
-            '本次 kbList=' + _list.length + ' 解析=' + courses.length,
-            '本次首条 ' + _jsonRow,
-            '本次顶层=' + _jsonSig.slice(0, 60),
-            '★ 本次数据来自 = ' + _hit,
-            '---- 重新探测两个接口 ----',
-            _epLines.join('\n')
+        const _c0 = courses[0] || {};
+        const _rawCampus = _list.filter(r => String(r.xqmc || '').trim().length > 0).length;
+        const _outCampus = courses.filter(c => String(c.position || '').includes('新区')).length;
+
+        // 周三每一条的节次与周次 —— 直接盯住「离散数学 周三7-8」会不会被丢掉或合并
+        const _wed = courses
+            .filter(c => c.day === 3)
+            .sort((a, b) => a.startSection - b.startSection)
+            .map(c => c.name.slice(0, 6) + ' ' + c.startSection + '-' + c.endSection +
+                      ' [' + c.weeks.join(',') + ']');
+
+        // 全部课程的 星期/节次 —— 用来核对有没有两条被合并成一条
+        const _all = courses.slice()
+            .sort((a, b) => a.day - b.day || a.startSection - b.startSection)
+            .map(c => c.day + '/' + c.startSection + '-' + c.endSection);
+
+        const _body = [
+            '版本 SANXIAU-DIAG-11',
+            '原始带xqmc ' + _rawCampus + '/' + _list.length +
+                '    产出带新区 ' + _outCampus + '/' + courses.length,
+            '原始[0] xqmc=' + _sj(_r0.xqmc) + ' cdmc=' + _sj(_r0.cdmc),
+            '重算[0] position=' + _sj(_reposition),
+            '解析[0] ' + _sj(_c0.name) + ' position=' + _sj(_c0.position),
+            '---- 周三各条：课程 节次 [周次] ----',
+            _wed.join('\n') || '(周三一条都没有)',
+            '---- 全部 ' + courses.length + ' 条的 星期/节次 ----',
+            _all.join(' ')
         ];
-        if (!_hasCampus) {
-            _body2.push('---- 本次 kbList[0] 全字段 ----');
-            _body2.push(Object.keys(_list[0] || {}).join('|'));
-        }
 
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-10',
-            _body2.join('\n'),
+            '诊断 SANXIAU-DIAG-11',
+            _body.join('\n'),
             '知道了'
         );
     } catch (e) {
