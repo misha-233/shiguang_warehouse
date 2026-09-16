@@ -622,7 +622,7 @@ async function fetchTimeSlots() {
 async function promptUserToStart() {
     return await window.shiguangBridgePromise.showAlert(
         '重庆三峡科技大学教务课表导入',
-        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-9]',
+        '导入前请确保您已在当前页面成功登录教务系统。\n\n本脚本只会读取课表数据，不会保存您的账号或密码。\n\n[版本 SANXIAU-DIAG-10]',
         '好的，开始导入'
     );
 }
@@ -751,28 +751,47 @@ async function runImportFlow() {
             .map(k => k + '=' + _sj(_r0[k]))
             .join('  ');
 
-        // 顶层所有名字里带「周次/日期/时间」的字段，不管认不认识，全部摊开
-        const _zbKeys = Object.keys(json).filter(k => /rq|zc|sj|date|week|xq/i.test(k));
-        const _zbInfo = _zbKeys.map(k => {
-            const v = json[k];
-            if (Array.isArray(v)) {
-                return k + '[] len=' + v.length +
-                       (v.length ? '  首项=' + _sj(v[0]).slice(0, 130) : '  (空数组)');
+        // 顶层字段全量摊开（不过滤，认不认识都列出来）
+        const _topKeys = Object.keys(json).join(',');
+
+        // 两个候选接口分别再打一次，看到底哪个有数据、字段长什么样
+        const _root = getContextRoot();
+        const _body = `xnm=${academicYear}&xqm=${semesterCode}&kzlx=ck&xsdm=&kclbdm=`;
+        const _epLines = [];
+        for (const ep of [
+            ['A.cxXsgrkb', '/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151'],
+            ['B.cxXsKb',   '/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151']
+        ]) {
+            try {
+                const r = await postForm(_root + ep[1], _body);
+                if (r && Array.isArray(r.kbList)) {
+                    const k0 = Object.keys(r.kbList[0] || {});
+                    _epLines.push(ep[0] + ' kbList=' + r.kbList.length +
+                                  ' 首条字段=' + k0.slice(0, 14).join('|'));
+                } else if (r) {
+                    _epLines.push(ep[0] + ' 无kbList，顶层=' + Object.keys(r).slice(0, 8).join('|'));
+                } else {
+                    _epLines.push(ep[0] + ' 返回空');
+                }
+            } catch (err) {
+                _epLines.push(ep[0] + ' 异常 ' + err.message);
             }
-            return k + '=' + _sj(v).slice(0, 130);
-        }).join('\n');
+        }
+
+        const _r0k = Object.keys(_r0);
 
         await window.shiguangBridgePromise.showAlert(
-            '诊断 SANXIAU-DIAG-9',
+            '诊断 SANXIAU-DIAG-10',
             [
-                '版本 SANXIAU-DIAG-9',
+                '版本 SANXIAU-DIAG-10',
                 'kbList=' + _list.length + ' 解析=' + courses.length,
-                '原始带xqmc=' + _rawWithCampus + ' 产出带新区=' + _outWithCampus,
                 '首条地点=' + _sj((courses[0] || {}).position),
-                '--- 校区/教室字段 ---',
-                _relFields || '(一个都没有)',
-                '--- 周次/日期类顶层字段 ---',
-                _zbInfo || '(一个都没有)'
+                '--- 本次 json 顶层字段 ---',
+                _topKeys.slice(0, 300) || '(空)',
+                '--- 本次 kbList[0] 字段 ---',
+                _r0k.slice(0, 20).join('|') || '(空)',
+                '--- 两个接口分别探测 ---',
+                _epLines.join('\n')
             ].join('\n'),
             '知道了'
         );
@@ -780,7 +799,7 @@ async function runImportFlow() {
         // 兜底：哪怕诊断自身出错，也要把错误显示出来，绝不静默
         try {
             await window.shiguangBridgePromise.showAlert(
-                '诊断出错 DIAG-9',
+                '诊断出错 DIAG-10',
                 String((e && e.message) || e),
                 '知道了'
             );
@@ -823,7 +842,7 @@ async function runImportFlow() {
     await savePresetTimeSlots(timeSlots);
 
     // 7. 完成
-    let msg = `[SANXIAU-DIAG-9] 导入成功，共 ${courses.length} 条课程安排！`;
+    let msg = `[SANXIAU-DIAG-10] 导入成功，共 ${courses.length} 条课程安排！`;
     if (semesterStartDate) {
         msg += ` 开学日期：${semesterStartDate}`;
     } else {
