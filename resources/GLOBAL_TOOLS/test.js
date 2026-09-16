@@ -737,61 +737,48 @@ async function runImportFlow() {
             return (s === undefined || s === null) ? String(v) : s;
         };
 
+        // 顶层字段签名：用来判断「本次 json」到底出自哪个接口
+        const _sig = (o) => (o && typeof o === 'object') ? Object.keys(o).join(',') : '';
+        // 一行摘要：只列我们真正关心的四个字段，取值原样打印（带引号，空串也看得见）
+        const _row = (r) => r ? (
+            'xqmc=' + _sj(r.xqmc) + ' cdmc=' + _sj(r.cdmc) +
+            ' zcd=' + _sj(r.zcd) + ' jc=' + _sj(r.jcor || r.jcs || r.jc)
+        ) : '(无行)';
+
         const _list = Array.isArray(json.kbList) ? json.kbList : [];
-        const _rawWithCampus = _list.filter(
-            r => String(r.xqmc || '').trim().length > 0
-        ).length;
-        const _outWithCampus = courses.filter(
-            c => String(c.position || '').includes('新区')
-        ).length;
+        const _jsonSig = _sig(json);
+        const _jsonRow = _row(_list[0]);
 
-        const _r0 = _list[0] || {};
-        const _relFields = Object.keys(_r0)
-            .filter(k => /^(xq|cd|jxdd|campus|room)/i.test(k))
-            .map(k => k + '=' + _sj(_r0[k]))
-            .join('  ');
-
-        // 顶层字段全量摊开（不过滤，认不认识都列出来）
-        const _topKeys = Object.keys(json).join(',');
-
-        // 两个候选接口分别再打一次，看到底哪个有数据、字段长什么样
+        // 两个候选接口各再打一次，比对顶层签名，确认「本次 json」出自哪一个
         const _root = getContextRoot();
         const _body = `xnm=${academicYear}&xqm=${semesterCode}&kzlx=ck&xsdm=&kclbdm=`;
         const _epLines = [];
+        let _hit = '都不是';
         for (const ep of [
-            ['A.cxXsgrkb', '/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151'],
-            ['B.cxXsKb',   '/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151']
+            ['A cxXsgrkb', '/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151'],
+            ['B cxXsKb  ', '/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151']
         ]) {
-            try {
-                const r = await postForm(_root + ep[1], _body);
-                if (r && Array.isArray(r.kbList)) {
-                    const k0 = Object.keys(r.kbList[0] || {});
-                    _epLines.push(ep[0] + ' kbList=' + r.kbList.length +
-                                  ' 首条字段=' + k0.slice(0, 14).join('|'));
-                } else if (r) {
-                    _epLines.push(ep[0] + ' 无kbList，顶层=' + Object.keys(r).slice(0, 8).join('|'));
-                } else {
-                    _epLines.push(ep[0] + ' 返回空');
-                }
-            } catch (err) {
-                _epLines.push(ep[0] + ' 异常 ' + err.message);
-            }
+            let r = null;
+            try { r = await postForm(_root + ep[1], _body); } catch (err) { r = null; }
+            if (!r) { _epLines.push(ep[0] + ' → 返回空/非 JSON'); continue; }
+            const list = Array.isArray(r.kbList) ? r.kbList : [];
+            if (_sig(r) === _jsonSig) _hit = ep[0].slice(0, 1);
+            _epLines.push(ep[0] + ' → kbList=' + list.length + ' 顶层=' + _sig(r).slice(0, 50));
+            _epLines.push('   首条 ' + _row(list[0]));
         }
-
-        const _r0k = Object.keys(_r0);
 
         await window.shiguangBridgePromise.showAlert(
             '诊断 SANXIAU-DIAG-10',
             [
                 '版本 SANXIAU-DIAG-10',
-                'kbList=' + _list.length + ' 解析=' + courses.length,
-                '首条地点=' + _sj((courses[0] || {}).position),
-                '--- 本次 json 顶层字段 ---',
-                _topKeys.slice(0, 300) || '(空)',
-                '--- 本次 kbList[0] 字段 ---',
-                _r0k.slice(0, 20).join('|') || '(空)',
-                '--- 两个接口分别探测 ---',
-                _epLines.join('\n')
+                '本次 kbList=' + _list.length + ' 解析=' + courses.length,
+                '本次首条 ' + _jsonRow,
+                '本次顶层=' + _jsonSig.slice(0, 50),
+                '★ 本次数据来自 = ' + _hit,
+                '---- 重新探测两个接口 ----',
+                _epLines.join('\n'),
+                '---- 本次 kbList[0] 全字段 ----',
+                Object.keys(_list[0] || {}).join('|')
             ].join('\n'),
             '知道了'
         );
