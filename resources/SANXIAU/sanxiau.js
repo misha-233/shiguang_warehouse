@@ -653,7 +653,7 @@ function buildCourseConfig(semesterInfo, courses) {
 
     const config = { semesterStartDate: startDate };
 
-    const maxWeek = 0;
+    let maxWeek = 0;
     for (let i = 0; i < (courses || []).length; i++) {
         const ws = courses[i].weeks || [];
         for (let k = 0; k < ws.length; k++) {
